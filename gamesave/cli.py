@@ -16,6 +16,7 @@ from .presets import list_presets, list_profiles, write_config_template
 from .resolution import resolve_conflict
 from .scanner import scan_local, scan_sync_dir
 from .sync import apply_actions
+from .walkthrough import DEFAULT_TEST_ROOT, DEFAULT_TEST_SYNC, run_self_test, walkthrough_text, write_synthetic_config
 
 
 def print_actions(actions: list[PlannedAction]) -> None:
@@ -169,6 +170,27 @@ def cmd_resolve(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_walkthrough(args: argparse.Namespace) -> int:
+    print(walkthrough_text())
+    return 0
+
+
+def cmd_self_test(args: argparse.Namespace) -> int:
+    if args.write_only:
+        write_synthetic_config(args.config, root=args.root, sync_dir=args.sync_dir, force=args.force)
+        print(f"wrote {args.config}")
+        return 0
+
+    result = run_self_test(args.config, root=args.root, sync_dir=args.sync_dir, reset=args.reset)
+    for step in result.steps:
+        print(step)
+    print(f"config {result.config_path}")
+    print(f"local  {result.local_save}")
+    print(f"sync   {result.sync_save}")
+    print("result PASS" if result.ok else "result FAIL")
+    return 0 if result.ok else 1
+
+
 def build_parser() -> argparse.ArgumentParser:
     config_parent = argparse.ArgumentParser(add_help=False)
     config_parent.add_argument("--config", type=Path, default=argparse.SUPPRESS)
@@ -217,6 +239,18 @@ def build_parser() -> argparse.ArgumentParser:
     names_subparsers = names.add_subparsers(dest="names_command", required=True)
     names_audit = names_subparsers.add_parser("audit", help="audit save naming and ROM mismatches", parents=[config_parent])
     names_audit.set_defaults(func=cmd_names_audit)
+
+    walkthrough = subparsers.add_parser("walkthrough", help="print staged handheld setup steps")
+    walkthrough.set_defaults(func=cmd_walkthrough)
+
+    self_test = subparsers.add_parser("self-test", help="run an isolated synthetic sync pipeline")
+    self_test.add_argument("--config", type=Path, default=Path("gamesave-test.toml"))
+    self_test.add_argument("--root", type=Path, default=DEFAULT_TEST_ROOT)
+    self_test.add_argument("--sync-dir", type=Path, default=DEFAULT_TEST_SYNC)
+    self_test.add_argument("--reset", action="store_true", help="clear the synthetic test folders first")
+    self_test.add_argument("--write-only", action="store_true", help="only write the synthetic test config")
+    self_test.add_argument("--force", action="store_true", help="overwrite an existing synthetic config with --write-only")
+    self_test.set_defaults(func=cmd_self_test)
 
     return parser
 

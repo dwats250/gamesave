@@ -43,6 +43,23 @@ python3 -m gamesave init-device --profile rg476h --config gamesave.toml
 python3 -m gamesave init-device --profile retroid-pocket-4-pro --config gamesave.toml
 ```
 
+Or use the guided setup flow:
+
+```bash
+python3 -m gamesave walkthrough
+python3 -m gamesave self-test --reset
+```
+
+`self-test` creates only synthetic files under:
+
+```text
+/storage/emulated/0/GamesaveTest
+/storage/emulated/0/RetroSaveSyncTest
+```
+
+Use that test sync folder in Syncthing-Fork first. Only move to real emulator
+folders after the self-test and test-folder Syncthing pass both work.
+
 The shared directory layout is:
 
 ```text

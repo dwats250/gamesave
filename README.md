@@ -60,6 +60,180 @@ python3 -m gamesave self-test --reset
 Use that test sync folder in Syncthing-Fork first. Only move to real emulator
 folders after the self-test and test-folder Syncthing pass both work.
 
+## Detailed Walkthrough
+
+This walkthrough is meant to prove each risky part in isolation before real
+emulator saves are touched. Run the same stages on both handhelds.
+
+### Stage 1: Install And Clone
+
+Install Termux and Syncthing-Fork on the handheld.
+
+In Termux:
+
+```bash
+pkg update
+pkg install python git
+cd ~
+git clone https://github.com/dwats250/gamesave.git
+cd gamesave
+```
+
+Confirm the CLI works:
+
+```bash
+python3 -m unittest discover -s tests -v
+python3 -m gamesave --help
+python3 -m gamesave presets list
+```
+
+Stop here if Python, Git, or the test suite fails.
+
+### Stage 2: Run The Synthetic Pipeline
+
+Run:
+
+```bash
+python3 -m gamesave self-test --reset
+```
+
+Expected output should end with:
+
+```text
+doctor=WARN
+scan=1
+plan=UPLOAD
+copy=ok
+second_status=skip
+result PASS
+```
+
+This creates:
+
+```text
+/storage/emulated/0/GamesaveTest/local/gba/TestGame.sav
+/storage/emulated/0/RetroSaveSyncTest/saves/gba/save/TestGame.sav
+gamesave-test.toml
+```
+
+This confirms `gamesave` can scan, plan, copy, write a manifest, and detect that
+a second run is already synchronized.
+
+### Stage 3: Test Syncthing With Synthetic Data
+
+In Syncthing-Fork, share only this folder between handhelds:
+
+```text
+/storage/emulated/0/RetroSaveSyncTest
+```
+
+Do not add real emulator save folders yet.
+
+On device A:
+
+```bash
+cd ~/gamesave
+printf "from-device-a" > /storage/emulated/0/GamesaveTest/local/gba/TestGame.sav
+python3 -m gamesave sync --config gamesave-test.toml
+```
+
+Wait until Syncthing-Fork says the test folder is synchronized.
+
+On device B:
+
+```bash
+cd ~/gamesave
+python3 -m gamesave sync --config gamesave-test.toml
+cat /storage/emulated/0/GamesaveTest/local/gba/TestGame.sav
+```
+
+Expected:
+
+```text
+from-device-a
+```
+
+Then reverse the test from device B back to device A. Only continue after both
+directions work.
+
+### Stage 4: Create The Real Device Config
+
+On the RG476H:
+
+```bash
+python3 -m gamesave init-device --profile rg476h --config gamesave.toml
+```
+
+On the Retroid Pocket 4 Pro:
+
+```bash
+python3 -m gamesave init-device --profile retroid-pocket-4-pro --config gamesave.toml
+```
+
+Open `gamesave.toml` and remove or edit emulator path entries you do not use.
+Android emulator paths vary by app version and storage permissions, so treat the
+preset as a starting point, not a guarantee.
+
+### Stage 5: Real-Save Safety Gate
+
+Run:
+
+```bash
+python3 -m gamesave doctor --config gamesave.toml
+python3 -m gamesave backup --config gamesave.toml
+python3 -m gamesave names audit --config gamesave.toml
+python3 -m gamesave sync --config gamesave.toml --dry-run
+```
+
+Review the dry run before doing a real sync:
+
+```text
+UPLOAD    means local file would be copied into the sync folder
+DOWNLOAD  means sync-folder file would be copied into the local emulator folder
+CONFLICT  means both sides differ and gamesave will preserve a conflict copy
+SKIP      means no file copy is needed
+```
+
+Do not continue if the dry run wants to download into the wrong emulator folder
+or upload files you do not recognize.
+
+### Stage 6: First Real Sync
+
+After the dry run looks right:
+
+```bash
+python3 -m gamesave sync --config gamesave.toml
+```
+
+Wait for Syncthing-Fork to finish syncing the real `RetroSaveSync` folder before
+starting the game on the other device.
+
+On the other device:
+
+```bash
+python3 -m gamesave sync --config gamesave.toml --dry-run
+python3 -m gamesave sync --config gamesave.toml
+```
+
+### Stage 7: Normal Use
+
+Before switching devices:
+
+```bash
+python3 -m gamesave sync --config gamesave.toml
+```
+
+Wait for Syncthing-Fork to finish.
+
+Before launching the game on the next device:
+
+```bash
+python3 -m gamesave sync --config gamesave.toml
+```
+
+For the lowest risk, quit the emulator before syncing. Save states are more
+fragile than normal in-game saves, especially when emulator cores differ.
+
 The shared directory layout is:
 
 ```text

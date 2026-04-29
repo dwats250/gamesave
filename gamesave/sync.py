@@ -5,7 +5,7 @@ import os
 from pathlib import Path, PurePosixPath
 import shutil
 
-from .config import Config, SyncPath
+from .config import Config
 from .models import ActionType, PlannedAction
 from .scanner import sync_file_path
 
@@ -33,6 +33,21 @@ def conflict_path(target: Path, device_name: str, *, timestamp: str | None = Non
     return target.with_name(f"{target.stem}.conflict.{device_name}.{timestamp}{target.suffix}")
 
 
+def conflict_store_path(sync_dir: Path, key: str, device_name: str, *, timestamp: str | None = None) -> Path:
+    timestamp = timestamp or datetime.now().strftime("%Y%m%d-%H%M%S")
+    target = sync_file_path(sync_dir, key)
+    relative = target.relative_to(sync_dir / "saves")
+    candidate = sync_dir / "conflicts" / relative.parent / f"{target.stem}.conflict.{device_name}.{timestamp}{target.suffix}"
+    if not candidate.exists():
+        return candidate
+    counter = 1
+    while True:
+        alternate = candidate.with_name(f"{candidate.stem}.{counter}{candidate.suffix}")
+        if not alternate.exists():
+            return alternate
+        counter += 1
+
+
 def apply_actions(config: Config, actions: list[PlannedAction]) -> None:
     for action in actions:
         if action.action == ActionType.SKIP:
@@ -57,5 +72,4 @@ def apply_actions(config: Config, actions: list[PlannedAction]) -> None:
         if action.action == ActionType.CONFLICT:
             if action.source is None:
                 raise ValueError(f"conflict missing source for {action.key}")
-            target = sync_file_path(config.sync_dir, action.key)
-            atomic_copy(action.source, conflict_path(target, config.device_name))
+            atomic_copy(action.source, conflict_store_path(config.sync_dir, action.key, config.device_name))

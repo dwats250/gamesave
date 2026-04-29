@@ -4,11 +4,16 @@ import argparse
 from pathlib import Path
 import sys
 
+from .backup import backup_actions, create_full_backup
 from .config import load_config
+from .doctor import run_doctor, write_doctor_report
 from .lock import sync_lock
 from .manifest import load_manifest, write_manifest
 from .models import ActionType, PlannedAction
+from .names import audit_names, write_name_audit
 from .planner import plan_sync
+from .presets import list_presets, list_profiles, write_config_template
+from .resolution import resolve_conflict
 from .scanner import scan_local, scan_sync_dir
 from .sync import apply_actions
 
@@ -64,6 +69,9 @@ def cmd_sync(args: argparse.Namespace) -> int:
         return 0
 
     with sync_lock(config.sync_dir):
+        backup = backup_actions(config, actions)
+        if backup is not None:
+            print(f"backup {backup}")
         apply_actions(config, actions)
         refreshed = scan_sync_dir(config.sync_dir)
         write_manifest(config.sync_dir, refreshed)
@@ -75,19 +83,89 @@ def cmd_sync(args: argparse.Namespace) -> int:
 
 def cmd_conflicts(args: argparse.Namespace) -> int:
     config = load_config(args.config)
-    root = config.sync_dir / "saves"
-    if not root.exists():
-        print("no conflicts")
-        return 0
-
-    conflicts = sorted(path for path in root.rglob("*") if path.is_file() and ".conflict." in path.name)
+    roots = (config.sync_dir / "conflicts", config.sync_dir / "saves")
+    conflicts: list[Path] = []
+    for root in roots:
+        if root.exists():
+            conflicts.extend(path for path in root.rglob("*") if path.is_file() and ".conflict." in path.name)
+    conflicts = sorted(conflicts)
     if not conflicts:
         print("no conflicts")
         return 0
 
     for path in conflicts:
-        print(path.relative_to(root))
+        try:
+            print(path.relative_to(config.sync_dir))
+        except ValueError:
+            print(path)
     print(f"{len(conflicts)} conflict file(s)")
+    return 0
+
+
+def cmd_backup(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    root = create_full_backup(config)
+    print(f"backup {root}")
+    return 0
+
+
+def cmd_doctor(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    report = run_doctor(config)
+    print(f"status {report.status}")
+    for error in report.errors:
+        print(f"ERROR {error}")
+    for warning in report.warnings:
+        print(f"WARN  {warning}")
+    try:
+        path = write_doctor_report(config, report)
+        print(f"report {path}")
+    except OSError as exc:
+        print(f"WARN  report not written: {exc}")
+    return 1 if report.status == "ERROR" and args.strict else 0
+
+
+def cmd_presets_list(args: argparse.Namespace) -> int:
+    print("profiles")
+    for profile in list_profiles():
+        print(f"  {profile}")
+    print("presets")
+    for preset in list_presets():
+        print(f"  {preset.emulator:12} {preset.system:10} {preset.kind:5} {preset.path}")
+    return 0
+
+
+def cmd_init_device(args: argparse.Namespace) -> int:
+    write_config_template(args.config, args.profile, force=args.force)
+    print(f"wrote {args.config}")
+    return 0
+
+
+def cmd_names_audit(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    audit = audit_names(config)
+    for collision in audit.case_collisions:
+        print("CASE_COLLISION " + " | ".join(collision))
+    for name in audit.save_without_rom:
+        print(f"SAVE_WITHOUT_ROM {name}")
+    for name in audit.rom_without_save:
+        print(f"ROM_WITHOUT_SAVE {name}")
+    for note in audit.notes:
+        print(f"NOTE {note}")
+    try:
+        path = write_name_audit(config, audit)
+        print(f"report {path}")
+    except OSError as exc:
+        print(f"WARN report not written: {exc}")
+    return 0
+
+
+def cmd_resolve(args: argparse.Namespace) -> int:
+    config = load_config(args.config)
+    primary, secondary = resolve_conflict(config, args.key, use=args.use, file_path=args.file)
+    print(f"resolved {args.key} -> {primary}")
+    if secondary is not None:
+        print(f"resolved {args.key} -> {secondary}")
     return 0
 
 
@@ -111,6 +189,34 @@ def build_parser() -> argparse.ArgumentParser:
 
     conflicts = subparsers.add_parser("conflicts", help="list preserved conflict files", parents=[config_parent])
     conflicts.set_defaults(func=cmd_conflicts)
+
+    backup = subparsers.add_parser("backup", help="create a local save backup snapshot", parents=[config_parent])
+    backup.set_defaults(func=cmd_backup)
+
+    doctor = subparsers.add_parser("doctor", help="diagnose sync setup risks", parents=[config_parent])
+    doctor.add_argument("--strict", action="store_true", help="exit nonzero when doctor reports errors")
+    doctor.set_defaults(func=cmd_doctor)
+
+    init_device = subparsers.add_parser("init-device", help="write an Android device config template", parents=[config_parent])
+    init_device.add_argument("--profile", choices=list_profiles(), required=True)
+    init_device.add_argument("--force", action="store_true")
+    init_device.set_defaults(func=cmd_init_device)
+
+    resolve = subparsers.add_parser("resolve", help="resolve a conflict by selecting a winning file", parents=[config_parent])
+    resolve.add_argument("key")
+    resolve.add_argument("--use", choices=("local", "sync", "file"), required=True)
+    resolve.add_argument("--file", type=Path)
+    resolve.set_defaults(func=cmd_resolve)
+
+    presets = subparsers.add_parser("presets", help="inspect device and emulator presets")
+    preset_subparsers = presets.add_subparsers(dest="preset_command", required=True)
+    presets_list = preset_subparsers.add_parser("list", help="list built-in presets")
+    presets_list.set_defaults(func=cmd_presets_list)
+
+    names = subparsers.add_parser("names", help="inspect ROM/save naming issues")
+    names_subparsers = names.add_subparsers(dest="names_command", required=True)
+    names_audit = names_subparsers.add_parser("audit", help="audit save naming and ROM mismatches", parents=[config_parent])
+    names_audit.set_defaults(func=cmd_names_audit)
 
     return parser
 

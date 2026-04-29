@@ -39,6 +39,10 @@ def scan_local(config: Config, *, now: float | None = None) -> dict[str, FileRec
                     mtime_ns=stat.st_mtime_ns,
                     sha256=file_sha256(path),
                     device=config.device_name,
+                    emulator=sync_path.emulator,
+                    path_role=sync_path.path_role,
+                    state_risk=sync_path.state_risk,
+                    core_name=sync_path.core_name,
                 )
 
     return records

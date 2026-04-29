@@ -20,6 +20,10 @@ class FileRecord:
     mtime_ns: int
     sha256: str
     device: str | None = None
+    emulator: str = "custom"
+    path_role: str = "save"
+    state_risk: str = "normal"
+    core_name: str | None = None
 
 
 @dataclass(frozen=True)
